@@ -20,7 +20,11 @@ const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 
 app.use(cors({
-    origin: true,
+    origin: [
+        "https://fees.shivcomputers.in",
+        "http://localhost:5173",
+        "http://localhost:5000"
+    ],
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true
 }));
