@@ -1,5 +1,6 @@
 import express from 'express';
 import path from 'path';
+import fs from 'fs';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import inquiryRoutes from './routes/inquiryRoutes';
@@ -16,24 +17,30 @@ import { getDatabase, dbPath } from './config/database';
 dotenv.config();
 
 const app = express();
-const PORT = Number(process.env.PORT) || 5000;
+const PORT = process.env.PORT || 5000;
 
-// Enable CORS for frontend and API communication
-const allowedOrigins = [
-    'https://fees.shivcomputers.in',
-    'https://api.shivcomputers.in',
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://localhost:5000'
-];
+// Universal CORS & Preflight Middleware
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+    } else {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+    next();
+});
 
 app.use(cors({
     origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.shivcomputers.in')) {
-            callback(null, true);
-        } else {
-            callback(null, true);
-        }
+        // Allow all origins including https://fees.shivcomputers.in and localhost
+        callback(null, true);
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
@@ -41,15 +48,18 @@ app.use(cors({
     optionsSuccessStatus: 200
 }));
 
-// Preflight options for all routes
-app.options('*', cors());
+app.options('*', (req, res) => {
+    res.status(200).end();
+});
 
 app.use(express.json({ limit: '100mb' }));
 app.use(express.urlencoded({ limit: '100mb', extended: true }));
 
-// Serve static files from the React app
+// Serve static files from the React app if available
 const frontendPath = process.env.FRONTEND_PATH || path.join(__dirname, '..', '..', 'frontend', 'dist');
-app.use(express.static(frontendPath));
+if (fs.existsSync(frontendPath)) {
+    app.use(express.static(frontendPath));
+}
 
 // Routes
 app.use('/api/auth', authRoutes);
@@ -66,21 +76,29 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', message: 'Backend is running' });
 });
 
-// For any other request, send back the index.html (for SPA routing)
-app.get('*', (req, res) => {
-    res.sendFile(path.join(frontendPath, 'index.html'));
+// Root route
+app.get('/', (req, res) => {
+    res.json({ status: 'OK', message: 'Shiv Computers Fees API is running' });
 });
 
-app.listen(
-    PORT,
-    "0.0.0.0",
-    async () => {
-        console.log(`Server is running on http://localhost:${PORT}`);
-        try {
-            await getDatabase();
-            console.log(`Database initialized successfully at: ${dbPath}`);
-        } catch (error) {
-            console.error("Failed to initialize database on startup:", error);
-        }
+// Fallback for any other request
+app.get('*', (req, res) => {
+    const indexPath = path.join(frontendPath, 'index.html');
+    if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+    } else {
+        res.status(404).json({ message: 'Endpoint not found' });
     }
-);
+});
+
+// Start listening immediately
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+    getDatabase()
+        .then(() => {
+            console.log(`Database initialized successfully at: ${dbPath}`);
+        })
+        .catch((error) => {
+            console.error("Failed to initialize database on startup:", error);
+        });
+});
