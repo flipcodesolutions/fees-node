@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-const express_1 = __importDefault(require("express")); // Triggering restart
+const express_1 = __importDefault(require("express"));
 const path_1 = __importDefault(require("path"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
@@ -20,15 +20,30 @@ const database_1 = require("./config/database");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
 const PORT = Number(process.env.PORT) || 5000;
+// Enable CORS for frontend and API communication
+const allowedOrigins = [
+    'https://fees.shivcomputers.in',
+    'https://api.shivcomputers.in',
+    'http://localhost:3000',
+    'http://localhost:5173',
+    'http://localhost:5000'
+];
 app.use((0, cors_1.default)({
-    origin: [
-        "https://fees.shivcomputers.in",
-        "http://localhost:5173",
-        "http://localhost:5000"
-    ],
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    credentials: true
+    origin: (origin, callback) => {
+        if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.shivcomputers.in')) {
+            callback(null, true);
+        }
+        else {
+            callback(null, true);
+        }
+    },
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
+    credentials: true,
+    optionsSuccessStatus: 200
 }));
+// Preflight options for all routes
+app.options('*', (0, cors_1.default)());
 app.use(express_1.default.json({ limit: '100mb' }));
 app.use(express_1.default.urlencoded({ limit: '100mb', extended: true }));
 // Serve static files from the React app
