@@ -40,6 +40,13 @@ app.get('/api/health', (req, res) => {
     res.json({ status: 'OK', message: 'Backend is running' });
 });
 
+app.use(cors({
+    origin: "https://fees.shivcomputers.in";,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    credentials: true
+}));
+
+
 // For any other request, send back the index.html (for SPA routing)
 app.get('*', (req, res) => {
     res.sendFile(path.join(frontendPath, 'index.html'));
