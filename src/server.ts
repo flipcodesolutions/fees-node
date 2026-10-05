@@ -37,7 +37,7 @@ app.use((req, res, next) => {
     next();
 });
 
-const corsOptions: cors.CorsOptions = {
+app.use(cors({
     origin: (origin, callback) => {
         // Allow all origins including https://fees.shivcomputers.in and localhost
         callback(null, true);
@@ -46,9 +46,7 @@ const corsOptions: cors.CorsOptions = {
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
     credentials: true,
     optionsSuccessStatus: 200
-};
-
-app.use(cors(corsOptions));
+}));
 
 app.options('*', (req, res) => {
     res.status(200).end();
@@ -63,52 +61,6 @@ if (fs.existsSync(frontendPath)) {
     app.use(express.static(frontendPath));
 }
 
-// Root Route - Browser me direct https://api.shivcomputers.in khol kar check karne ke liye
-app.get('/', (req, res) => {
-    res.json({
-        status: 'OK',
-        service: 'Shiv Computers Fees CRM API',
-        message: 'Backend server is live and running successfully!',
-        timestamp: new Date().toISOString()
-    });
-});
-
-// Health & Diagnostic Routes
-app.get('/api/health', async (req, res) => {
-    let dbStatus = 'OK';
-    let dbErrorMessage = null;
-    try {
-        await getDatabase();
-    } catch (err: any) {
-        dbStatus = 'FAILED';
-        dbErrorMessage = err?.message || String(err);
-    }
-
-    res.json({
-        status: dbStatus === 'OK' ? 'OK' : 'DEGRADED',
-        message: 'Backend server is responsive',
-        nodeVersion: process.version,
-        environment: process.env.NODE_ENV || 'development',
-        port: PORT,
-        database: {
-            status: dbStatus,
-            path: dbPath,
-            error: dbErrorMessage
-        },
-        uptimeSeconds: Math.floor(process.uptime()),
-        timestamp: new Date().toISOString()
-    });
-});
-
-app.get('/api/test', (req, res) => {
-    res.json({
-        status: 'OK',
-        message: 'CORS & API routes are working perfectly!',
-        originReceived: req.headers.origin || 'Direct Browser Request',
-        timestamp: new Date().toISOString()
-    });
-});
-
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/inquiries', protect, inquiryRoutes);
@@ -119,26 +71,24 @@ app.use('/api/backup', protect, backupRoutes);
 app.use('/api/whatsapp', whatsappRoutes);
 app.use('/api/settings', protect, settingsRoutes);
 
+// Health Check
+app.get('/api/health', (req, res) => {
+    res.json({ status: 'OK', message: 'Backend is running' });
+});
+
+// Root route
+app.get('/', (req, res) => {
+    res.json({ status: 'OK', message: 'Shiv Computers Fees API is running' });
+});
+
 // Fallback for any other request
 app.get('*', (req, res) => {
     const indexPath = path.join(frontendPath, 'index.html');
     if (fs.existsSync(indexPath)) {
         res.sendFile(indexPath);
     } else {
-        res.status(404).json({
-            error: 'Not Found',
-            message: 'Endpoint does not exist'
-        });
+        res.status(404).json({ message: 'Endpoint not found' });
     }
-});
-
-// Global Error Handler to always preserve JSON and avoid HTML 500 error pages
-app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
-    console.error('Unhandled API Error:', err);
-    res.status(500).json({
-        status: 'Error',
-        message: err?.message || 'Internal Server Error'
-    });
 });
 
 // Start listening immediately
