@@ -5,9 +5,9 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const path_1 = __importDefault(require("path"));
+const fs_1 = __importDefault(require("fs"));
 const cors_1 = __importDefault(require("cors"));
 const dotenv_1 = __importDefault(require("dotenv"));
-const fs_1 = __importDefault(require("fs"));
 const inquiryRoutes_1 = __importDefault(require("./routes/inquiryRoutes"));
 const courseRoutes_1 = __importDefault(require("./routes/courseRoutes"));
 const admissionRoutes_1 = __importDefault(require("./routes/admissionRoutes"));
@@ -20,23 +20,28 @@ const authMiddleware_1 = require("./middleware/authMiddleware");
 const database_1 = require("./config/database");
 dotenv_1.default.config();
 const app = (0, express_1.default)();
-const PORT = Number(process.env.PORT) || 5000;
-// Enable CORS for frontend and API communication
-const allowedOrigins = [
-    'https://fees.shivcomputers.in',
-    'https://api.shivcomputers.in',
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://localhost:5000'
-];
+const PORT = process.env.PORT || 5000;
+// Universal CORS & Preflight Middleware
+app.use((req, res, next) => {
+    const origin = req.headers.origin;
+    if (origin) {
+        res.setHeader('Access-Control-Allow-Origin', origin);
+    }
+    else {
+        res.setHeader('Access-Control-Allow-Origin', '*');
+    }
+    res.setHeader('Access-Control-Allow-Credentials', 'true');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS, HEAD');
+    res.setHeader('Access-Control-Allow-Headers', 'Origin, X-Requested-With, Content-Type, Accept, Authorization');
+    if (req.method === 'OPTIONS') {
+        return res.status(200).end();
+    }
+    next();
+});
 const corsOptions = {
     origin: (origin, callback) => {
-        if (!origin || allowedOrigins.includes(origin) || origin.endsWith('.shivcomputers.in')) {
-            callback(null, true);
-        }
-        else {
-            callback(null, true);
-        }
+        // Allow all origins including https://fees.shivcomputers.in and localhost
+        callback(null, true);
     },
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "HEAD"],
     allowedHeaders: ["Content-Type", "Authorization", "X-Requested-With", "Accept", "Origin"],
@@ -44,11 +49,12 @@ const corsOptions = {
     optionsSuccessStatus: 200
 };
 app.use((0, cors_1.default)(corsOptions));
-// Preflight options for all routes
-app.options('*', (0, cors_1.default)(corsOptions));
+app.options('*', (req, res) => {
+    res.status(200).end();
+});
 app.use(express_1.default.json({ limit: '100mb' }));
 app.use(express_1.default.urlencoded({ limit: '100mb', extended: true }));
-// Serve static files from the React app (if exists)
+// Serve static files from the React app if available
 const frontendPath = process.env.FRONTEND_PATH || path_1.default.join(__dirname, '..', '..', 'frontend', 'dist');
 if (fs_1.default.existsSync(frontendPath)) {
     app.use(express_1.default.static(frontendPath));
@@ -92,7 +98,6 @@ app.get('/api/test', (req, res) => {
     res.json({
         status: 'OK',
         message: 'CORS & API routes are working perfectly!',
-        allowedOrigins,
         originReceived: req.headers.origin || 'Direct Browser Request',
         timestamp: new Date().toISOString()
     });
@@ -106,7 +111,7 @@ app.use('/api/fees', authMiddleware_1.protect, feeRoutes_1.default);
 app.use('/api/backup', authMiddleware_1.protect, backupRoutes_1.default);
 app.use('/api/whatsapp', whatsappRoutes_1.default);
 app.use('/api/settings', authMiddleware_1.protect, settingsRoutes_1.default);
-// For any other request, send back index.html (for SPA) or JSON 404
+// Fallback for any other request
 app.get('*', (req, res) => {
     const indexPath = path_1.default.join(frontendPath, 'index.html');
     if (fs_1.default.existsSync(indexPath)) {
@@ -127,13 +132,14 @@ app.use((err, req, res, next) => {
         message: err?.message || 'Internal Server Error'
     });
 });
-app.listen(PORT, "0.0.0.0", async () => {
-    console.log(`Server is running on http://localhost:${PORT}`);
-    try {
-        await (0, database_1.getDatabase)();
+// Start listening immediately
+app.listen(PORT, () => {
+    console.log(`Server is running on port ${PORT}`);
+    (0, database_1.getDatabase)()
+        .then(() => {
         console.log(`Database initialized successfully at: ${database_1.dbPath}`);
-    }
-    catch (error) {
+    })
+        .catch((error) => {
         console.error("Failed to initialize database on startup:", error);
-    }
+    });
 });
