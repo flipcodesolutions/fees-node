@@ -11,7 +11,7 @@ export const SettingsModel = {
      */
     async get(key: string): Promise<string | undefined> {
         const db = await getDatabase();
-        const row = await db.get('SELECT value FROM settings WHERE key = ?', [key]);
+        const row = await db.get('SELECT value FROM settings WHERE `key` = ?', [key]);
         return row?.value;
     },
 
@@ -23,7 +23,7 @@ export const SettingsModel = {
     async set(key: string, value: string): Promise<any> {
         const db = await getDatabase();
         return db.run(
-            'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+            'REPLACE INTO settings (`key`, value) VALUES (?, ?)',
             [key, value]
         );
     },
@@ -34,7 +34,7 @@ export const SettingsModel = {
      */
     async delete(key: string): Promise<any> {
         const db = await getDatabase();
-        return db.run('DELETE FROM settings WHERE key = ?', [key]);
+        return db.run('DELETE FROM settings WHERE `key` = ?', [key]);
     },
 
     /**
@@ -42,7 +42,7 @@ export const SettingsModel = {
      */
     async getAll(): Promise<Record<string, string>> {
         const db = await getDatabase();
-        const rows = await db.all('SELECT key, value FROM settings');
+        const rows = await db.all('SELECT `key`, value FROM settings');
         const settings: Record<string, string> = {};
         for (const row of rows) {
             settings[row.key] = row.value;
@@ -61,7 +61,7 @@ export const SettingsModel = {
         try {
             for (const [key, value] of Object.entries(settings)) {
                 await db.run(
-                    'INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)',
+                    'REPLACE INTO settings (`key`, value) VALUES (?, ?)',
                     [key, value]
                 );
             }
