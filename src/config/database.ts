@@ -8,9 +8,10 @@ import bcrypt from 'bcryptjs';
 
 dotenv.config();
 
-// Use absolute path from env or default to local file
-export const dbPath = process.env.DATABASE_URL
-    ? (path.isAbsolute(process.env.DATABASE_URL) ? process.env.DATABASE_URL : path.resolve(__dirname, '..', '..', process.env.DATABASE_URL))
+// Use a configured database file path or default to a local file
+const configuredDbPath = process.env.DATABASE_PATH || process.env.DATABASE_URL;
+export const dbPath = configuredDbPath
+    ? (path.isAbsolute(configuredDbPath) ? configuredDbPath : path.resolve(__dirname, '..', '..', configuredDbPath))
     : path.resolve(__dirname, '..', '..', 'database.sqlite');
 
 const migrationsPath = process.env.MIGRATIONS_PATH

@@ -5,4 +5,5 @@ database.sqlite*
 *.sqlite
 *.sqlite3
 *.log
+database.sqlite
 
