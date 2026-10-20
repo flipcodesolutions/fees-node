@@ -1,23 +1,8 @@
-import { open, Database as SqliteDatabase } from 'sqlite';
-import sqlite3 from 'sqlite3';
-sqlite3.verbose();
 import mysql, { Pool } from 'mysql2/promise';
-import path from 'path';
-import fs from 'fs';
 import dotenv from 'dotenv';
 import bcrypt from 'bcryptjs';
 
 dotenv.config();
-
-// Use a configured database file path or default to a local file
-const configuredDbPath = process.env.DATABASE_PATH || process.env.DATABASE_URL;
-export const dbPath = configuredDbPath
-    ? (path.isAbsolute(configuredDbPath) ? configuredDbPath : path.resolve(__dirname, '..', '..', configuredDbPath))
-    : path.resolve(__dirname, '..', '..', 'database.sqlite');
-
-const migrationsPath = process.env.MIGRATIONS_PATH
-    ? (path.isAbsolute(process.env.MIGRATIONS_PATH) ? process.env.MIGRATIONS_PATH : path.resolve(__dirname, '..', '..', process.env.MIGRATIONS_PATH))
-    : path.resolve(__dirname, '..', '..', 'migrations');
 
 export interface AppDatabase {
     get(sql: string, params?: any[]): Promise<any>;
@@ -25,16 +10,11 @@ export interface AppDatabase {
     run(sql: string, params?: any[]): Promise<{ lastID: number; changes: number }>;
     exec(sql: string): Promise<any>;
     close(): Promise<void>;
-    readonly type: 'mysql' | 'sqlite';
+    readonly type: 'mysql';
 }
 
 export function isUsingMysql(): boolean {
-    return Boolean(
-        process.env.DB_HOST ||
-        process.env.MYSQL_HOST ||
-        process.env.DB_NAME ||
-        process.env.DB_TYPE === 'mysql'
-    );
+    return true;
 }
 
 function normalizeSqlForMysql(sql: string): string {
@@ -246,184 +226,15 @@ async function initMysqlTables(pool: Pool) {
     }
 }
 
-async function createSqliteDatabase(): Promise<AppDatabase> {
-    const dbDir = path.dirname(dbPath);
-    if (!fs.existsSync(dbDir)) {
-        fs.mkdirSync(dbDir, { recursive: true });
-    }
-
-    const rawDb = await open({
-        filename: dbPath,
-        driver: sqlite3.Database
-    });
-
-    // Enable WAL mode
-    await rawDb.exec('PRAGMA journal_mode=WAL;');
-
-    // Run migrations from /migrations folder
-    try {
-        await rawDb.migrate({
-            migrationsPath: migrationsPath,
-        });
-    } catch (e) {
-        console.warn('Migration warning:', e);
-    }
-
-    await ensureColumns(rawDb, 'inquiries', [
-        ['reference_name', 'TEXT'],
-        ['inquiry_for', 'TEXT'],
-        ['remark', 'TEXT'],
-        ['status', "TEXT DEFAULT 'Pending'"],
-        ['created_at', 'DATETIME DEFAULT CURRENT_TIMESTAMP'],
-    ]);
-
-    await ensureColumns(rawDb, 'courses', [
-        ['course_code', 'TEXT'],
-        ['duration', 'TEXT'],
-        ['fees', 'TEXT'],
-        ['details', 'TEXT'],
-        ['status', "TEXT DEFAULT 'Active'"],
-        ['created_at', 'DATETIME DEFAULT CURRENT_TIMESTAMP'],
-    ]);
-
-    await ensureColumns(rawDb, 'admissions', [
-        ['inquiry_id', 'INTEGER'],
-        ['student_name', 'TEXT'],
-        ['mobile', 'TEXT'],
-        ['reference_name', 'TEXT'],
-        ['inquiry_for', 'TEXT'],
-        ['remark', 'TEXT'],
-        ['payload_json', 'TEXT'],
-        ['status', "TEXT DEFAULT 'Active'"],
-        ['created_at', 'DATETIME DEFAULT CURRENT_TIMESTAMP'],
-    ]);
-
-    await rawDb.exec(`
-        CREATE TABLE IF NOT EXISTS fees (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            admission_id INTEGER UNIQUE,
-            total_amount REAL,
-            paid_amount REAL DEFAULT 0,
-            remaining_amount REAL,
-            status TEXT DEFAULT 'Pending',
-            next_payment_date TEXT,
-            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `);
-
-    await ensureColumns(rawDb, 'fees', [
-        ['next_payment_date', 'TEXT'],
-    ]);
-
-    await rawDb.exec(`
-        CREATE TABLE IF NOT EXISTS fee_payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            admission_id INTEGER,
-            amount REAL,
-            payment_date DATETIME DEFAULT CURRENT_TIMESTAMP,
-            remark TEXT,
-            next_payment_date TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `);
-
-    await ensureColumns(rawDb, 'fee_payments', [
-        ['next_payment_date', 'TEXT'],
-    ]);
-
-    await rawDb.exec(`
-        CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            username TEXT UNIQUE,
-            password TEXT,
-            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    `);
-
-    await rawDb.exec(`
-        CREATE TABLE IF NOT EXISTS settings (
-            \`key\` TEXT PRIMARY KEY,
-            value TEXT
-        )
-    `);
-
-    try {
-        const tableInfo = await rawDb.all("PRAGMA table_info(users)");
-        const hasEmail = tableInfo.some((col: any) => col.name === 'email');
-        if (hasEmail) {
-            await rawDb.exec("ALTER TABLE users RENAME COLUMN email TO username");
-            await rawDb.run(
-                "UPDATE users SET username = ? WHERE username = 'shivcomputer.snr@gmail.com'",
-                ['admin']
-            );
-        }
-    } catch (err) {
-        console.error("Migration error for users table:", err);
-    }
-
-    const user = await rawDb.get('SELECT * FROM users WHERE username = ?', ['admin']);
-    if (!user) {
-        const hashedPassword = await bcrypt.hash('admin123', 10);
-        await rawDb.run('INSERT INTO users (username, password) VALUES (?, ?)', ['admin', hashedPassword]);
-    } else if (user.password === 'admin123') {
-        const hashedPassword = await bcrypt.hash('admin123', 10);
-        await rawDb.run('UPDATE users SET password = ? WHERE id = ?', [hashedPassword, user.id]);
-    }
-
-    const adapter: AppDatabase = {
-        type: 'sqlite',
-        get(sql: string, params?: any[]): Promise<any> {
-            return rawDb.get(sql, params || []);
-        },
-        all(sql: string, params?: any[]): Promise<any[]> {
-            return rawDb.all(sql, params || []);
-        },
-        run(sql: string, params?: any[]): Promise<{ lastID: number; changes: number }> {
-            return rawDb.run(sql, params || []).then(r => ({
-                lastID: Number(r.lastID || 0),
-                changes: Number(r.changes || 0)
-            }));
-        },
-        exec(sql: string): Promise<any> {
-            return rawDb.exec(sql);
-        },
-        close(): Promise<void> {
-            return rawDb.close();
-        }
-    };
-
-    return adapter;
-}
-
 export async function getDatabase(): Promise<AppDatabase> {
     if (dbInstance) return dbInstance;
 
-    if (isUsingMysql()) {
-        try {
-            dbInstance = await createMysqlDatabase();
-            console.log('✅ Connected to MySQL successfully.');
-            return dbInstance;
-        } catch (err) {
-            console.error('❌ Failed to connect to MySQL:', err);
-            throw err;
-        }
-    } else {
-        dbInstance = await createSqliteDatabase();
-        console.log(`✅ Database initialized with SQLite at: ${dbPath}`);
+    try {
+        dbInstance = await createMysqlDatabase();
+        console.log('✅ Connected to MySQL successfully.');
         return dbInstance;
-    }
-}
-
-async function ensureColumns(
-    database: SqliteDatabase,
-    table: string,
-    columns: Array<[name: string, definition: string]>,
-) {
-    const existing: Array<{ name: string }> = await database.all(`PRAGMA table_info(${table});`);
-    const existingNames = new Set(existing.map((c) => c.name));
-    for (const [name, definition] of columns) {
-        if (!existingNames.has(name)) {
-            await database.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${definition};`);
-        }
+    } catch (err) {
+        console.error('❌ Failed to connect to MySQL:', err);
+        throw err;
     }
 }

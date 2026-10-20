@@ -14,7 +14,7 @@ export interface Admission {
 }
 
 /**
- * AdmissionModel encapsulates SQLite queries for managing student admissions.
+ * AdmissionModel encapsulates MySQL queries for managing student admissions.
  */
 export const AdmissionModel = {
   /**

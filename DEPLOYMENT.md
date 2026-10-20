@@ -1,23 +1,24 @@
-# Render deployment: keep SQLite data between deploys
+# Backend Deployment & MySQL Configuration
 
-The default `database.sqlite` file is stored with the application code, so it is
-not persistent on Render. Attach a persistent disk to the backend service and
-point the app at a file on that disk:
+This CRM backend runs on MySQL.
 
-1. In the Render dashboard, add a persistent disk to the backend web service
-   with the mount path `/var/data`.
-2. In that service's environment variables, set
-   `DATABASE_PATH=/var/data/database.sqlite`.
-3. Deploy/restart the service. The application creates the database file and
-   its parent directory if they do not exist.
+### Environment Variables
+Configure the following environment variables on your server or hosting provider (e.g. Render, Railway, VPS):
 
-Before changing the path, download a backup from the authenticated
-`GET /api/backup/export` endpoint. After the service is using the persistent
-disk, restore that file through the authenticated `POST /api/backup/import`
-endpoint (the request accepts the backup as base64 in `fileData`). Otherwise,
-the newly mounted disk starts with a new, empty database. Keep a separate
-backup as well; a persistent disk protects against deploys replacing the app
-filesystem, but it is not a substitute for backups.
+```env
+PORT=5000
+NODE_ENV=production
+JWT_SECRET=your_jwt_secret_key_here
 
-`DATABASE_URL` is still accepted as a legacy database-file path. Prefer
-`DATABASE_PATH` for SQLite so it is not confused with a network database URL.
+DB_HOST=localhost
+DB_PORT=3306
+DB_USER=root
+DB_PASSWORD=your_password
+DB_NAME=fees_crm
+```
+
+### Automatic Table Initialization
+On server startup, the backend automatically connects to MySQL, creates the database if needed, initializes all tables with UTF8MB4 charset, and seeds the default admin user (`admin` / `admin123`).
+
+### Backup & Restore
+Backup and restore are performed via authenticated JSON format using the `/api/backup/export` and `/api/backup/import` endpoints, or from the Settings -> Database Backup & Restore interface.

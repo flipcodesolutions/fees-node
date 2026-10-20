@@ -11,7 +11,7 @@ import backupRoutes from './routes/backupRoutes';
 import whatsappRoutes from './routes/whatsappRoutes';
 import settingsRoutes from './routes/settingsRoutes';
 import { protect } from './middleware/authMiddleware';
-import { getDatabase, dbPath } from './config/database';
+import { getDatabase } from './config/database';
 
 dotenv.config();
 
@@ -78,7 +78,7 @@ app.listen(
         console.log(`Server is running on http://localhost:${PORT}`);
         try {
             await getDatabase();
-            console.log(`Database initialized successfully at: ${dbPath}`);
+            console.log('Database initialized successfully with MySQL');
         } catch (error) {
             console.error("Failed to initialize database on startup:", error);
         }

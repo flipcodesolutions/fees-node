@@ -7,7 +7,6 @@
     "build": "tsc",
     "start": "node dist/server.js",
     "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
-    "migrate:mysql": "node migrate-to-mysql.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [],
@@ -34,8 +33,6 @@
     "mysql2": "^3.24.5",
     "nodemailer": "^8.0.9",
     "pdfkit": "^0.15.2",
-    "sqlite": "^5.1.1",
-    "sqlite3": "5.1.7",
     "typescript": "^6.0.3"
   },
   "devDependencies": {
