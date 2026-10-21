@@ -31,15 +31,20 @@ export interface FeePayment {
  * - Paid amount > 0 resolves to 'Half Complete'.
  * - Otherwise remains 'Pending'.
  */
-const normalizeFeeStatus = (fee: FeeSummary): FeeSummary => {
-    if (fee.status === 'Deleted') return fee;
-    if (fee.remaining_amount <= 0) {
-        return { ...fee, status: 'Complete' };
+const normalizeFeeStatus = (fee: any): FeeSummary => {
+    const total_amount = Number(fee.total_amount || 0);
+    const paid_amount = Number(fee.paid_amount || 0);
+    const remaining_amount = Number(fee.remaining_amount || 0);
+    if (fee.status === 'Deleted') {
+        return { ...fee, total_amount, paid_amount, remaining_amount };
     }
-    if (fee.paid_amount > 0) {
-        return { ...fee, status: 'Half Complete' };
+    if (remaining_amount <= 0) {
+        return { ...fee, total_amount, paid_amount, remaining_amount, status: 'Complete' };
     }
-    return { ...fee, status: 'Pending' };
+    if (paid_amount > 0) {
+        return { ...fee, total_amount, paid_amount, remaining_amount, status: 'Half Complete' };
+    }
+    return { ...fee, total_amount, paid_amount, remaining_amount, status: 'Pending' };
 };
 
 /**
