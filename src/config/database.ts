@@ -180,8 +180,6 @@ async function initMysqlTables(pool: Pool) {
             id INT AUTO_INCREMENT PRIMARY KEY,
             admission_id INT UNIQUE,
             total_amount DECIMAL(12,2),
-            paid_amount DECIMAL(12,2) DEFAULT 0,
-            remaining_amount DECIMAL(12,2),
             status VARCHAR(50) DEFAULT 'Pending',
             next_payment_date VARCHAR(50),
             updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

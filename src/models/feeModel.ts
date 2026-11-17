@@ -34,7 +34,7 @@ export interface FeePayment {
 const normalizeFeeStatus = (fee: any): FeeSummary => {
     const total_amount = Number(fee.total_amount || 0);
     const paid_amount = Number(fee.paid_amount || 0);
-    const remaining_amount = Number(fee.remaining_amount || 0);
+    const remaining_amount = Math.max(0, total_amount - paid_amount);
     if (fee.status === 'Deleted') {
         return { ...fee, total_amount, paid_amount, remaining_amount };
     }
@@ -53,13 +53,31 @@ const normalizeFeeStatus = (fee: any): FeeSummary => {
 export const FeeModel = {
     /**
      * Retrieve all fee summaries with student details.
+     * paid_amount and remaining_amount are dynamically calculated from fee_payments.
      */
     async findAll(): Promise<FeeSummary[]> {
         const db = await getDatabase();
         const rows = await db.all(`
-            SELECT f.*, a.student_name, a.mobile, a.inquiry_for, a.payload_json 
+            SELECT 
+                f.id,
+                f.admission_id,
+                f.total_amount,
+                COALESCE(p.paid_amount, 0) AS paid_amount,
+                GREATEST(0, CAST(f.total_amount AS DECIMAL(12,2)) - COALESCE(p.paid_amount, 0)) AS remaining_amount,
+                f.status,
+                f.next_payment_date,
+                f.updated_at,
+                a.student_name,
+                a.mobile,
+                a.inquiry_for,
+                a.payload_json 
             FROM fees f
             JOIN admissions a ON f.admission_id = a.id
+            LEFT JOIN (
+                SELECT admission_id, SUM(amount) AS paid_amount
+                FROM fee_payments
+                GROUP BY admission_id
+            ) p ON f.admission_id = p.admission_id
             ORDER BY f.updated_at DESC
         `);
         return rows.map(normalizeFeeStatus);
@@ -70,7 +88,26 @@ export const FeeModel = {
      */
     async findByAdmissionId(admissionId: number): Promise<FeeSummary | undefined> {
         const db = await getDatabase();
-        return db.get('SELECT * FROM fees WHERE admission_id = ?', [admissionId]);
+        const row = await db.get(`
+            SELECT 
+                f.id,
+                f.admission_id,
+                f.total_amount,
+                COALESCE(p.paid_amount, 0) AS paid_amount,
+                GREATEST(0, CAST(f.total_amount AS DECIMAL(12,2)) - COALESCE(p.paid_amount, 0)) AS remaining_amount,
+                f.status,
+                f.next_payment_date,
+                f.updated_at
+            FROM fees f
+            LEFT JOIN (
+                SELECT admission_id, SUM(amount) AS paid_amount
+                FROM fee_payments
+                WHERE admission_id = ?
+                GROUP BY admission_id
+            ) p ON f.admission_id = p.admission_id
+            WHERE f.admission_id = ?
+        `, [admissionId, admissionId]);
+        return row ? normalizeFeeStatus(row) : undefined;
     },
 
     /**
@@ -86,22 +123,30 @@ export const FeeModel = {
      */
     async getAllPayments(): Promise<any[]> {
         const db = await getDatabase();
-        return db.all(`
+        const rows = await db.all(`
             SELECT p.*, 
                    COALESCE(p.next_payment_date, f.next_payment_date) AS next_payment_date,
-                   f.total_amount, f.paid_amount, f.remaining_amount, f.status, 
+                   f.total_amount,
+                   COALESCE(tot.paid_amount, 0) AS paid_amount,
+                   GREATEST(0, CAST(f.total_amount AS DECIMAL(12,2)) - COALESCE(tot.paid_amount, 0)) AS remaining_amount,
+                   f.status, 
                    a.student_name, a.mobile, a.inquiry_for, a.payload_json
             FROM fee_payments p
             JOIN fees f ON p.admission_id = f.admission_id
             JOIN admissions a ON p.admission_id = a.id
+            LEFT JOIN (
+                SELECT admission_id, SUM(amount) AS paid_amount
+                FROM fee_payments
+                GROUP BY admission_id
+            ) tot ON f.admission_id = tot.admission_id
             WHERE f.status != 'Deleted'
             ORDER BY p.id DESC
         `);
+        return rows.map(normalizeFeeStatus);
     },
 
     /**
      * Delete an individual payment record.
-     * Recalculates total paid/remaining amounts on the corresponding fee summary.
      * @param paymentId The payment record ID.
      */
     async deletePayment(paymentId: number): Promise<boolean> {
@@ -112,28 +157,13 @@ export const FeeModel = {
         // Delete transaction from ledger
         await db.run('DELETE FROM fee_payments WHERE id = ?', [paymentId]);
 
-        // Recalculate and update the overall fee summary by subtracting deleted amount
-        const fee = await this.findByAdmissionId(payment.admission_id);
-        if (fee) {
-            const newPaidAmount = fee.paid_amount - payment.amount;
-            const newRemaining = fee.total_amount - newPaidAmount;
-            let status = 'Pending';
-            if (newPaidAmount > 0) {
-                status = newRemaining <= 0 ? 'Complete' : 'Half Complete';
-            }
-            await db.run(
-                `UPDATE fees 
-                 SET paid_amount = ?, remaining_amount = ?, status = ?, updated_at = CURRENT_TIMESTAMP 
-                 WHERE admission_id = ?`,
-                [newPaidAmount, newRemaining, status, payment.admission_id]
-            );
-        }
+        // Touch updated_at on fees summary
+        await db.run('UPDATE fees SET updated_at = CURRENT_TIMESTAMP WHERE admission_id = ?', [payment.admission_id]);
         return true;
     },
 
     /**
      * Update an individual payment transaction.
-     * Computes the numeric difference (delta) and updates the fee summary table.
      * @param paymentId Unique payment ID.
      * @param amount New transaction amount.
      * @param remark Log details.
@@ -143,8 +173,6 @@ export const FeeModel = {
         const db = await getDatabase();
         const existingPayment = await db.get('SELECT * FROM fee_payments WHERE id = ?', [paymentId]);
         if (!existingPayment) return false;
-
-        const oldAmount = existingPayment.amount;
 
         // Update payment ledger log
         if (createdAt) {
@@ -158,23 +186,8 @@ export const FeeModel = {
             await db.run('UPDATE fee_payments SET amount = ?, remark = ? WHERE id = ?', [amount, remark, paymentId]);
         }
 
-        // Update fee summary adjustments using the delta difference (new amount minus old amount)
-        const fee = await this.findByAdmissionId(existingPayment.admission_id);
-        if (fee) {
-            const difference = amount - oldAmount;
-            const newPaidAmount = fee.paid_amount + difference;
-            const newRemaining = fee.total_amount - newPaidAmount;
-            let status = 'Pending';
-            if (newPaidAmount > 0) {
-                status = newRemaining <= 0 ? 'Complete' : 'Half Complete';
-            }
-            await db.run(
-                `UPDATE fees 
-                 SET paid_amount = ?, remaining_amount = ?, status = ?, updated_at = CURRENT_TIMESTAMP 
-                 WHERE admission_id = ?`,
-                [newPaidAmount, newRemaining, status, existingPayment.admission_id]
-            );
-        }
+        // Touch updated_at on fees summary
+        await db.run('UPDATE fees SET updated_at = CURRENT_TIMESTAMP WHERE admission_id = ?', [existingPayment.admission_id]);
         return true;
     },
 
@@ -207,31 +220,26 @@ export const FeeModel = {
      */
     async upsertFeeSummary(admissionId: number, totalAmount: number): Promise<any> {
         const db = await getDatabase();
-        const existing = await this.findByAdmissionId(admissionId);
+        const existing = await db.get('SELECT * FROM fees WHERE admission_id = ?', [admissionId]);
 
         if (existing) {
-            const remaining = totalAmount - existing.paid_amount;
-            let status = 'Pending';
-            if (existing.paid_amount > 0) {
-                status = remaining <= 0 ? 'Complete' : 'Half Complete';
-            }
             return db.run(
                 `UPDATE fees 
-                 SET total_amount = ?, remaining_amount = ?, status = ?, updated_at = CURRENT_TIMESTAMP 
+                 SET total_amount = ?, updated_at = CURRENT_TIMESTAMP 
                  WHERE admission_id = ?`,
-                [totalAmount, remaining, status, admissionId]
+                [totalAmount, admissionId]
             );
         } else {
             return db.run(
-                'INSERT INTO fees (admission_id, total_amount, paid_amount, remaining_amount, status) VALUES (?, ?, ?, ?, ?)',
-                [admissionId, totalAmount, 0, totalAmount, 'Pending']
+                'INSERT INTO fees (admission_id, total_amount, status) VALUES (?, ?, ?)',
+                [admissionId, totalAmount, 'Pending']
             );
         }
     },
 
     /**
      * Record a new fee payment.
-     * Increments the overall paid fees count and modifies remaining balance status automatically.
+     * Inserts transaction into fee_payments and updates next_payment_date on fees.
      */
     async addPayment(admissionId: number, amount: number, remark: string, createdAt?: string, nextPaymentDate?: string): Promise<number> {
         const db = await getDatabase();
@@ -250,24 +258,16 @@ export const FeeModel = {
 
         const paymentId = result.lastID;
 
-        // Fetch current summary and apply adjustments
+        // Fetch current summary and apply adjustments to next_payment_date
         const fee = await this.findByAdmissionId(admissionId);
-        if (fee) {
-            const newPaidAmount = fee.paid_amount + amount;
-            const newRemaining = fee.total_amount - newPaidAmount;
-            let status = 'Pending';
-            if (newPaidAmount > 0) {
-                status = newRemaining <= 0 ? 'Complete' : 'Half Complete';
-            }
-            // If fully paid, delete any upcoming next payment dates
-            const nextDate = newRemaining <= 0 ? null : (nextPaymentDate || null);
-            await db.run(
-                `UPDATE fees 
-                 SET paid_amount = ?, remaining_amount = ?, status = ?, next_payment_date = ?, updated_at = CURRENT_TIMESTAMP 
-                 WHERE admission_id = ?`,
-                [newPaidAmount, newRemaining, status, nextDate, admissionId]
-            );
-        }
+        const nextDate = (fee && fee.remaining_amount <= 0) ? null : (nextPaymentDate || null);
+        await db.run(
+            `UPDATE fees 
+             SET next_payment_date = ?, updated_at = CURRENT_TIMESTAMP 
+             WHERE admission_id = ?`,
+            [nextDate, admissionId]
+        );
+
         return paymentId as number;
     },
 

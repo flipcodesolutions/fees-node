@@ -45,23 +45,35 @@ router.post('/import', async (req, res) => {
         const json = JSON.parse(textContent);
         let totalImported = 0;
 
-        for (const table of TABLES) {
-            if (Array.isArray(json[table]) && json[table].length > 0) {
-                for (const row of json[table]) {
-                    const keys = Object.keys(row);
-                    const cols = keys.map(k => `\`${k}\``).join(', ');
-                    const placeholders = keys.map(() => '?').join(', ');
-                    const values = keys.map(k => {
-                        const v = row[k];
-                        if (v === '' && (k.includes('date') || k.endsWith('_at'))) {
-                            return null;
-                        }
-                        return v;
-                    });
-                    await db.run(`REPLACE INTO \`${table}\` (${cols}) VALUES (${placeholders})`, values);
-                    totalImported++;
+        await db.run('SET FOREIGN_KEY_CHECKS = 0');
+        try {
+            for (const table of TABLES) {
+                if (Array.isArray(json[table]) && json[table].length > 0) {
+                    // Fetch existing columns in this database table
+                    const tableColsRaw = await db.all(`SHOW COLUMNS FROM \`${table}\``);
+                    const validCols = new Set(tableColsRaw.map((c: any) => c.Field));
+
+                    for (const row of json[table]) {
+                        // Only use keys that actually exist in the target table
+                        const keys = Object.keys(row).filter(k => validCols.has(k));
+                        if (keys.length === 0) continue;
+
+                        const cols = keys.map(k => `\`${k}\``).join(', ');
+                        const placeholders = keys.map(() => '?').join(', ');
+                        const values = keys.map(k => {
+                            const v = row[k];
+                            if (v === '' && (k.includes('date') || k.endsWith('_at'))) {
+                                return null;
+                            }
+                            return v !== undefined ? v : null;
+                        });
+                        await db.run(`REPLACE INTO \`${table}\` (${cols}) VALUES (${placeholders})`, values);
+                        totalImported++;
+                    }
                 }
             }
+        } finally {
+            await db.run('SET FOREIGN_KEY_CHECKS = 1');
         }
 
         return res.json({ message: `Database imported successfully! ${totalImported} records safely imported into MySQL.` });
